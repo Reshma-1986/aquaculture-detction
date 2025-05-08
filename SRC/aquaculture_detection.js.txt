@@ -6,7 +6,7 @@ var waterOcc = ee.Image("JRC/GSW1_0/GlobalSurfaceWater").select('occurrence'),
 var topo = ee.Image("NOAA/NGDC/ETOPO1"),
     s2 = ee.ImageCollection("COPERNICUS/S2_SR"),
     s1 = ee.ImageCollection("COPERNICUS/S1_GRD"),
-    geometry = ee.FeatureCollection("projects/ee-reshmaraj532/assets/CWRDM/aqua_ponds/delta_boundary");
+    geometry = ee.FeatureCollection("projects/your_project_boundary");
 
 Map.centerObject(geometry,10); 
 var globalParam = {   
