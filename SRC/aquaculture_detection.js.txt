@@ -90,21 +90,7 @@ var totalFallowedArea = classified.reduceRegion({reducer: ee.Reducer.sum(),
 });
 //print('Total fallowed area, sq km:', totalFallowedArea);
 
-/**var vectors = classified.reduceToVectors({
-  geometry: geometry,
-  crs: classified.projection(),
-  scale: 10,
-  geometryType: 'polygon',
-  eightConnected: false,
-  labelProperty: 'class',
-  reducer: ee.Reducer.mean(),
-  maxPixels: 1e10
-});
 
-var display = ee.Image(0).updateMask(0).paint(vectors, '000000', 3);
-Map.addLayer(display, {palette: '000000'}, 'vectors');
-
-**/
 Export.image.toDrive({
   image: classified,
   description: 'imageToDriveExample_transform',
