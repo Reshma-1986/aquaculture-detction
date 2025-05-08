@@ -1,0 +1,116 @@
+var waterOcc = ee.Image("JRC/GSW1_0/GlobalSurfaceWater").select('occurrence'),
+    jrc_data0 = ee.Image("JRC/GSW1_0/Metadata").select('total_obs').lte(0),
+    waterOccFilled = waterOcc.unmask(0).max(jrc_data0),
+    waterMask = waterOccFilled.lt(50);
+    
+var topo = ee.Image("NOAA/NGDC/ETOPO1"),
+    s2 = ee.ImageCollection("COPERNICUS/S2_SR"),
+    s1 = ee.ImageCollection("COPERNICUS/S1_GRD"),
+    geometry = ee.FeatureCollection("projects/ee-reshmaraj532/assets/CWRDM/aqua_ponds/delta_boundary");
+
+Map.centerObject(geometry,10); 
+var globalParam = {   
+    roi: geometry,
+    start_date: '2020-1-1',
+    end_date: '2020-12-31',
+    tree_nums:100,
+    tileScale: 16,
+    classProperty: 'landcover',
+    trained_data: false
+};
+
+function rmCloudByQA(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  var masks = qa.bitwiseAnd(cloudBitMask).eq(0)
+               .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(masks);
+}
+
+function NDWI(image) {
+  var NDWIed = image.normalizedDifference(["B3",'B8']);
+  return image.addBands(NDWIed.rename("NDWI"));
+}
+
+var sentinel2 = s2.filterDate("2020-1-1","2020-12-31")
+                  .filterBounds(geometry)
+                  .filterMetadata("CLOUDY_PIXEL_PERCENTAGE", "less_than", 20)
+                  .map(rmCloudByQA)
+                  .map(NDWI);
+
+var ndwi_mean = sentinel2.select("NDWI").reduce(ee.Reducer.intervalMean(75, 100)).clip(geometry).updateMask(waterMask);
+
+var NDWI_threshold = ndwi_mean.gt(0.06).rename('threshold');
+
+var NDWI_means= ndwi_mean.updateMask(NDWI_threshold);
+Map.addLayer(NDWI_means,{min:-1,max:1});
+
+
+var polygons = ee.FeatureCollection([
+  ee.Feature(water, {'class': 1}),
+  ee.Feature(aqua_culture, {'class': 0}),
+]);
+
+var training = NDWI_means.sampleRegions({
+  // Get the sample from the polygons FeatureCollection.
+  collection: polygons,
+  // Keep this list of properties from the polygons.
+  properties: ['class'],
+  // Set the scale to get Landsat pixels in the polygons.
+  scale: 10
+});
+
+
+// Create an SVM classifier with custom parameters.
+var classifier = ee.Classifier.libsvm({
+  kernelType: 'RBF',
+  gamma: 0.5,
+  cost: 10
+});
+
+// Train the classifier.
+var trained = classifier.train(training, 'class', NDWI_means.bandNames());
+
+// Classify the image.
+var classified = NDWI_means.classify(trained);
+
+
+Map.addLayer(classified,
+             {min: 0, max: 1, palette: ['blue', 'green']});
+             
+var areaImageSqM = ee.Image.pixelArea()
+	.clip(geometry);
+var areaImageSqKm = areaImageSqM.multiply(0.000001);
+var fallowedArea = classified.multiply(areaImageSqKm);
+var totalFallowedArea = classified.reduceRegion({reducer: ee.Reducer.sum(),
+	geometry: geometry,
+	scale: 10,
+  maxPixels: 1e10
+});
+//print('Total fallowed area, sq km:', totalFallowedArea);
+
+/**var vectors = classified.reduceToVectors({
+  geometry: geometry,
+  crs: classified.projection(),
+  scale: 10,
+  geometryType: 'polygon',
+  eightConnected: false,
+  labelProperty: 'class',
+  reducer: ee.Reducer.mean(),
+  maxPixels: 1e10
+});
+
+var display = ee.Image(0).updateMask(0).paint(vectors, '000000', 3);
+Map.addLayer(display, {palette: '000000'}, 'vectors');
+
+**/
+Export.image.toDrive({
+  image: classified,
+  description: 'imageToDriveExample_transform',
+  region: geometry,
+  scale: 10,
+  maxPixels: 1e10
+});
+
+
