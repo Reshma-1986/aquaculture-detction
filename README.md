@@ -83,4 +83,4 @@ If you would like to contribute to this project:
 ---
 
 ## Contact
-For questions or suggestions, feel free to reach out to **reshmaraj532** at [your email/contact information].
+For questions or suggestions, feel free to reach out to **reshmaraj532@gmail.com**.
