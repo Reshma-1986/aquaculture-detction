@@ -1,86 +1,124 @@
-# aquaculture-detection
-# Aquaculture Detection using Google Earth Engine
+# Aquaculture Mapping Using Sentinel-2 NDWI in Google Earth Engine
 
-## Overview
-This project aims to detect aquaculture areas and water bodies using satellite imagery and remote sensing techniques. The analysis leverages **Google Earth Engine (GEE)**, specifically using **Sentinel-2** imagery and **Normalized Difference Water Index (NDWI)** for classifying water bodies and aquaculture zones. The classification is carried out using the **Support Vector Machine (SVM)** classifier.
+This project maps aquaculture ponds within a user-defined study area using Sentinel-2 satellite imagery and NDWI (Normalized Difference Water Index). It utilizes Google Earth Engine (GEE) for cloud filtering, water detection, vectorization, and geometric filtering to isolate aquaculture features.
 
-## Features
-- NDWI computation to detect water bodies.
-- Classification of water and non-water areas, including aquaculture detection.
-- Cloud masking using QA bands from Sentinel-2 imagery.
-- Export of results to Google Drive for further analysis.
+##  Data Source
+- **Satellite**: Sentinel-2 Surface Reflectance (COPERNICUS/S2_SR)
+- **Time Period**: January 1, 2020 – December 31, 2020
+- **Bands Used**:
+  - B3 (Green)
+  - B8 (Near Infrared - NIR)
+  - QA60 (for cloud and cirrus masking)
 
-## Requirements
-- A **Google Earth Engine** account. If you don't have one, you can sign up [here](https://signup.earthengine.google.com/).
-- Access to **Sentinel-2** imagery for the region of interest.
-- **Geometry boundary** (polygon of the area you are analyzing, used in the `geometry` variable).
+##  Study Area
+The script uses a predefined geometry (`g1`) that represents the boundary of the region of interest (ROI). Replace `g1` with your study area polygon.
 
-## How to Run the Code
-1. **Go to the Google Earth Engine Code Editor**:
-   - Navigate to [https://code.earthengine.google.com/](https://code.earthengine.google.com/).
-   - Log in using your Google account (or sign up for access).
+---
 
-2. **Create a New Script**:
-   - Click on **New** → **New Script**.
-   - Give it a name, such as `Aquaculture Detection`.
+##  Workflow Overview
 
-3. **Copy and Paste the Code**:
-   - Copy the GEE code from this repository.
-   - Paste it into the new script in the Code Editor.
+### 1. **Cloud and Cirrus Masking**
+- The QA60 band is used to mask clouds and cirrus using bitwise operations.
 
-4. **Run the Script**:
-   - After pasting the code, click the **Run** button at the top of the editor.
-   - The map will display the classification of water bodies and aquaculture areas.
+### 2. **NDWI Calculation**
+- NDWI = (Green - NIR) / (Green + NIR)
+- Helps in identifying water bodies.
 
-5. **Export the Results**:
-   - The results (classified image) will be exported to your **Google Drive**.
-   - Check your **Google Drive** for the image file, typically named `imageToDriveExample_transform`.
+### 3. **Image Collection Processing**
+- Sentinel-2 SR images are filtered for the year 2020 and cloud cover < 20%.
+- NDWI is calculated for each image.
+- A mean composite NDWI image is generated.
 
-## Code Explanation
-1. **Water Occurrence Masking**:
-   - We use the **JRC Global Surface Water Dataset** to detect water occurrence.
-   - A mask is created to identify water pixels and exclude areas with minimal water occurrence.
+### 4. **Thresholding**
+- NDWI threshold of `> 0.06` is applied to isolate water bodies.
+- Threshold can be tuned for different regions.
 
-2. **Sentinel-2 Data Processing**:
-   - Sentinel-2 imagery from the year 2020 is filtered and cloud masking is applied using the **QA60** band.
-   - The **NDWI (Normalized Difference Water Index)** is calculated to distinguish water bodies from other land surfaces.
+### 5. **Vectorization**
+- Binary NDWI mask is converted to vector polygons.
+- Geometry is simplified to reduce complexity.
 
-3. **Classification**:
-   - A supervised classification is performed using the **Support Vector Machine (SVM)** classifier, with two classes: **Water** (class 1) and **Aquaculture** (class 0).
+### 6. **Shape and Area Filtering**
+- Polygons are filtered by:
+  - Area < 50 hectares (500,000 sq. meters)
+  - Shape Index > 0.2 (to eliminate linear features like rivers)
 
-4. **Area Calculation**:
-   - The script calculates the total area of the classified water and aquaculture regions using pixel areas.
+### 7. **Output**
+- Final layer highlights probable aquaculture ponds.
+- Total area of aquaculture is calculated and printed in:
+  - Square meters
+  - Hectares
 
-5. **Export**:
-   - The classified map is exported to Google Drive for further analysis or visualization.
 
-## Exported Results
-Once the script is executed, the output image will be stored in **Google Drive**. You can use this image for further spatial analysis, map creation, or reporting.
+##  Technical Concepts
 
-## Additional Notes
-- You can modify the geometry (`geometry`) to analyze different regions.
-- Adjust the NDWI threshold if the classification results are not satisfactory.
-- The script currently uses a simple SVM classifier, but you can experiment with other machine learning classifiers or add more training data for better accuracy.
+###  NDWI (Normalized Difference Water Index)
+The **Normalized Difference Water Index (NDWI)** is a satellite-derived index that highlights water features in remote sensing imagery. It is particularly useful for identifying water bodies such as lakes, ponds, and aquaculture farms.
+
+**Formula:**
+
+NDWI = (Green - NIR) / (Green + NIR)
+
+
+- **Green Band (B3)**: Strongly reflects from water surfaces.
+- **NIR Band (B8)**: Water absorbs NIR, resulting in low reflectance.
+
+**Values:**
+- NDWI > 0.06 typically indicates water bodies.
+- NDWI < 0 often corresponds to vegetation, built-up areas, or bare soil.
+
+> NDWI helps distinguish water features from non-water areas efficiently and is widely used for water resource mapping, flood detection, and aquaculture monitoring.
+
+---
+
+###  Shape Index (Compactness Index)
+To differentiate between **aquaculture ponds** and **natural linear features** like rivers or canals, we use a geometric measure called the **Shape Index** (also known as Compactness Index).
+
+**Formula:**
+Shape Index = (4 × π × Area) / (Perimeter²)
+
+
+- **Value Range**:
+  - Close to **1.0** → Perfectly circular or square (ideal for aquaculture ponds).
+  - Close to **0.0** → Very elongated or irregular (rivers, canals).
+
+> This helps filter out natural water bodies that are less compact and retain only features that resemble human-made ponds used for aquaculture.
+
+---
+
+###  Area Filtering
+Large natural water bodies like lakes and wetlands are often excluded by setting an **area threshold**, e.g., `< 50 hectares (500,000 sq. meters)`. This size constraint complements the shape index in isolating small-scale, regular aquaculture ponds.
+
+---
+
+By combining **spectral (NDWI)** and **geometric (shape and area)** characteristics, the model ensures a more accurate detection of aquaculture features while minimizing false positives.
+
+
+
+---
+
+## Recommendations
+- **NDWI Threshold**: Tune based on region and season. Consider using dynamic thresholding (e.g., Otsu’s method).
+- **Seasonal Filtering**: Restrict analysis to dry/post-monsoon season to avoid misclassification due to flooding.
+- **Validation**: Use high-resolution imagery (e.g., from Google Earth or PlanetScope) to validate detected ponds/Use Support Vector Machine (SVM).
+- **Export**: Use `Export.table.toDrive()` to save the vector results for further analysis.
+-  **Use Better Data Product**: Use A nalysis Ready Data(ARD) for better ddetection.
+
+---
+
+## How to Run
+1. Open [Google Earth Engine Code Editor](https://code.earthengine.google.com).
+2. Paste the full script into the editor.
+3. Replace `g1` with your own study area geometry.
+4. Click **Run**.
+5. View the results in the map and console.
+
+---
 
 ## License
-This project is licensed under the **MIT License** - see the [LICENSE.md](LICENSE.md) file for details.
-
-## Acknowledgments
-- **Sentinel-2** imagery: Provided by the European Space Agency (ESA).
-- **Google Earth Engine**: For offering powerful cloud-based geospatial processing.
-- **JRC Global Surface Water**: For the water occurrence dataset.
+This code is provided under the MIT License. You may use, modify, and distribute it freely with attribution.
 
 ---
 
-## Contributing
-If you would like to contribute to this project:
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/your-feature`).
-3. Commit your changes (`git commit -m 'Add new feature'`).
-4. Push to the branch (`git push origin feature/your-feature`).
-5. Create a pull request.
+##  Author
+- Reshma
 
----
-
-## Contact
-For questions or suggestions, feel free to reach out to **reshmaraj532@gmail.com**.
