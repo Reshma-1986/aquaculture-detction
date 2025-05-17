@@ -1,102 +1,88 @@
-var waterOcc = ee.Image("JRC/GSW1_0/GlobalSurfaceWater").select('occurrence'),
-    jrc_data0 = ee.Image("JRC/GSW1_0/Metadata").select('total_obs').lte(0),
-    waterOccFilled = waterOcc.unmask(0).max(jrc_data0),
-    waterMask = waterOccFilled.lt(50);
-    
-var topo = ee.Image("NOAA/NGDC/ETOPO1"),
-    s2 = ee.ImageCollection("COPERNICUS/S2_SR"),
-    s1 = ee.ImageCollection("COPERNICUS/S1_GRD"),
-    geometry = ee.FeatureCollection("projects/your_project_boundary");
 
-Map.centerObject(geometry,10); 
-var globalParam = {   
-    roi: geometry,
-    start_date: '2020-1-1',
-    end_date: '2020-12-31',
-    tree_nums:100,
-    tileScale: 16,
-    classProperty: 'landcover',
-    trained_data: false
-};
+var geometry = g1;// substitute with your study area polygon.
 
+// function to filter sentinel image based on cloud cover, you can change cloud percentage
 function rmCloudByQA(image) {
   var qa = image.select('QA60');
   var cloudBitMask = 1 << 10;
   var cirrusBitMask = 1 << 11;
-  var masks = qa.bitwiseAnd(cloudBitMask).eq(0)
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
                .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
-  return image.updateMask(masks);
+  return image.updateMask(mask);
 }
 
+
+//function to calculate NDWI
 function NDWI(image) {
-  var NDWIed = image.normalizedDifference(["B3",'B8']);
-  return image.addBands(NDWIed.rename("NDWI"));
+  return image.addBands(image.normalizedDifference(["B3", "B8"]).rename("NDWI"));
 }
 
-var sentinel2 = s2.filterDate("2020-1-1","2020-12-31")
-                  .filterBounds(geometry)
-                  .filterMetadata("CLOUDY_PIXEL_PERCENTAGE", "less_than", 20)
-                  .map(rmCloudByQA)
-                  .map(NDWI);
 
-var ndwi_mean = sentinel2.select("NDWI").reduce(ee.Reducer.intervalMean(75, 100)).clip(geometry).updateMask(waterMask);
+//filtering S2 optical image and taking median of year 2020 and calculate NDWI
 
-var NDWI_threshold = ndwi_mean.gt(0.06).rename('threshold');
+var s2 = ee.ImageCollection("COPERNICUS/S2_SR")
+  .filterDate("2020-01-01", "2020-12-31")
+  .filterBounds(geometry)
+  .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+  .map(rmCloudByQA)
+  .map(NDWI);
+  
+//Get mean NDWI image for year 2020 and clip it to study area
+var ndwiImage = s2.select("NDWI").mean().clip(geometry);
+Map.addLayer(ndwiImage, {min: -1, max: 1, palette: ['brown', 'white', 'blue']}, 'NDWI');
 
-var NDWI_means= ndwi_mean.updateMask(NDWI_threshold);
-Map.addLayer(NDWI_means,{min:-1,max:1});
+// threshold to mask low NDWI values
+var ndwiThreshold = ndwiImage.gt(0.06).rename("NDWI_thresh");
+var ndwiMasked = ndwiImage.updateMask(ndwiThreshold);
 
+Map.addLayer(ndwiMasked,{},'NDWI Image'); // dispaying NDWI image
 
-var polygons = ee.FeatureCollection([
-  ee.Feature(water, {'class': 1}),
-  ee.Feature(aqua_culture, {'class': 0}),
-]);
+var ndwiThreshold = 0.06;//threshold value is different for different region
+var binary = ndwiImage.gt(ndwiThreshold).selfMask();
 
-var training = NDWI_means.sampleRegions({
-  // Get the sample from the polygons FeatureCollection.
-  collection: polygons,
-  // Keep this list of properties from the polygons.
-  properties: ['class'],
-  // Set the scale to get Landsat pixels in the polygons.
-  scale: 10
-});
+Map.addLayer(binary, {}, 'NDWI > 0.06'); 
 
+//Vectorize (need integer image for reduceToVectors)
+var intImage = binary.multiply(1).toByte();
 
-// Create an SVM classifier with custom parameters.
-var classifier = ee.Classifier.libsvm({
-  kernelType: 'RBF',
-  gamma: 0.5,
-  cost: 10
-});
-
-// Train the classifier.
-var trained = classifier.train(training, 'class', NDWI_means.bandNames());
-
-// Classify the image.
-var classified = NDWI_means.classify(trained);
-
-
-Map.addLayer(classified,
-             {min: 0, max: 1, palette: ['blue', 'green']});
-             
-var areaImageSqM = ee.Image.pixelArea()
-	.clip(geometry);
-var areaImageSqKm = areaImageSqM.multiply(0.000001);
-var fallowedArea = classified.multiply(areaImageSqKm);
-var totalFallowedArea = classified.reduceRegion({reducer: ee.Reducer.sum(),
-	geometry: geometry,
-	scale: 10,
-  maxPixels: 1e10
-});
-//print('Total fallowed area, sq km:', totalFallowedArea);
-
-
-Export.image.toDrive({
-  image: classified,
-  description: 'imageToDriveExample_transform',
-  region: geometry,
+//vectorizing to remove streams detected as aquaculture
+var vectors = intImage.reduceToVectors({
+  geometry: geometry,
   scale: 10,
+  geometryType: 'polygon',
+  labelProperty: 'class',
+  reducer: ee.Reducer.countEvery(),
   maxPixels: 1e10
 });
 
+Map.addLayer(vectors, {color: 'green'}, 'All NDWI polygons');
 
+// Simplify geometries to reduce complexity
+var simplified = vectors.map(function(f) {
+  return f.setGeometry(f.geometry().simplify(1)); // 1 meter tolerance
+});
+
+// Calculate area & shape index (compactness)
+var enriched = simplified.map(function(f) {
+  var geom = f.geometry();
+  var area = geom.area(1);
+  var perimeter = geom.perimeter(1);
+  var shapeIndex = ee.Number(4).multiply(Math.PI).multiply(area)
+    .divide(perimeter.multiply(perimeter));
+  return f.set({'area': area, 'shapeIndex': shapeIndex});
+});
+
+//  Filter large water bodies and irregular shapes (like rivers)
+var filtered = enriched
+  .filter(ee.Filter.lt('area', 500000))          // < 50 hectares
+  .filter(ee.Filter.gt('shapeIndex', 0.2));     // To avoid linear shapes
+  
+// Total area in square meters
+var totalArea = filtered.aggregate_sum('area');
+print('Total Aquaculture Area (sq. meters):', totalArea);
+
+// Optional: convert to hectares
+var totalAreaHa = ee.Number(totalArea).divide(10000);
+print('Total Aquaculture Area (hectares):', totalAreaHa);
+
+Map.addLayer(filtered, {color: 'red'}, 'Filtered Aquaculture Ponds');
